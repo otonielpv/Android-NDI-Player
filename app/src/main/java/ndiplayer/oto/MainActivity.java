@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     private ArrayAdapter<String> adapter;
     private ArrayList<String> ndiSources;
     private TextView statusText;
+    private Button searchAgainButton; // Botón para buscar de nuevo
     
     // Connection state variables
     private boolean isConnected = false;
@@ -232,6 +233,7 @@ public class MainActivity extends Activity {
                             }
                             statusText.setText("✅ Encontradas " + foundCount + " fuentes NDI");
                             adapter.notifyDataSetChanged();
+                            searchAgainButton.setVisibility(View.GONE); // Ocultar botón cuando hay fuentes
                             Log.d(TAG, "Found " + foundCount + " NDI sources on attempt " + currentAttempt);
                         });
                         return; // Salir si encontramos fuentes
@@ -248,13 +250,14 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     ndiSources.clear();
                     ndiSources.add("⚠️ Sin fuentes NDI encontradas tras 8 intentos");
-                    ndiSources.add("📝 PC-OTO (FreeShow NDI - PROYECCION) debería aparecer");
-                    ndiSources.add("🔧 Posibles problemas:");
+                    ndiSources.add(" Posibles problemas:");
                     ndiSources.add("   • Dispositivos en redes diferentes");
                     ndiSources.add("   • Firewall bloqueando multicast");
-                    ndiSources.add("   • FreeShow NDI no visible en red");
+                    ndiSources.add("   • Fuentes NDI no visibles en red");
+                    ndiSources.add("🔄 Toca el botón 'Buscar de nuevo' para reintentar");
                     statusText.setText("⚠️ Sin fuentes NDI tras 8 intentos");
                     adapter.notifyDataSetChanged();
+                    searchAgainButton.setVisibility(View.VISIBLE); // Mostrar botón cuando no hay fuentes
                     Log.d(TAG, "No NDI sources found after 8 attempts");
                 });
                 
@@ -265,6 +268,7 @@ public class MainActivity extends Activity {
                     ndiSources.add("❌ Error en discovery: " + e.getMessage());
                     statusText.setText("❌ Error en búsqueda NDI");
                     adapter.notifyDataSetChanged();
+                    searchAgainButton.setVisibility(View.VISIBLE); // Mostrar botón en caso de error
                 });
             }
         }).start();
@@ -325,10 +329,30 @@ public class MainActivity extends Activity {
         // Añadir vistas al layout
         titleText.setText("🎥 NDI Player");
         
+        // Crear botón para buscar de nuevo (inicialmente oculto)
+        searchAgainButton = new Button(this);
+        searchAgainButton.setText("🔄 Buscar fuentes de nuevo");
+        searchAgainButton.setTextSize(16);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        buttonParams.setMargins(0, 10, 0, 10);
+        searchAgainButton.setLayoutParams(buttonParams);
+        searchAgainButton.setVisibility(View.GONE); // Inicialmente oculto
+        
+        // Configurar click del botón
+        searchAgainButton.setOnClickListener(v -> {
+            Log.d(TAG, "Search again button clicked");
+            Toast.makeText(this, "Buscando fuentes NDI...", Toast.LENGTH_SHORT).show();
+            searchAgainButton.setVisibility(View.GONE); // Ocultar botón durante búsqueda
+            performNDIDiscovery(); // Reiniciar búsqueda
+        });
+        
         layout.addView(titleText);
         layout.addView(statusText);
         layout.addView(ndiSourcesList, new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)); // weight=1 para que ocupe el espacio
+        layout.addView(searchAgainButton); // Añadir botón al final
         
         return layout;
     }
