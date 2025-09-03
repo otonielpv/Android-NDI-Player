@@ -148,6 +148,9 @@ Java_ndiplayer_oto_MainActivity_nativeConnectToSource(JNIEnv *env, jobject thiz,
     // Use fastest color format for best performance (official recommendation)
     recv_create.color_format = NDIlib_recv_color_format_fastest;
     
+    // OPTIMIZATION: Use lowest bandwidth for low-performance devices (TV, etc)
+    recv_create.bandwidth = NDIlib_recv_bandwidth_lowest;
+    
     LOGI("Creating receiver with official settings:");
     LOGI("  Source: %s", target_source->p_ndi_name);
     LOGI("  Receiver name: %s", recv_create.p_ndi_recv_name);

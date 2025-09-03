@@ -24,13 +24,22 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-DEBUG"
+            // Performance optimizations for low-end devices
+            buildConfigField("boolean", "ENABLE_PERFORMANCE_LOGGING", "true")
+            buildConfigField("int", "TARGET_FPS", "30")
+            buildConfigField("boolean", "USE_HARDWARE_ACCELERATION", "true")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Release optimizations
+            buildConfigField("boolean", "ENABLE_PERFORMANCE_LOGGING", "false")
+            buildConfigField("int", "TARGET_FPS", "30")
+            buildConfigField("boolean", "USE_HARDWARE_ACCELERATION", "true")
         }
         create("staging") {
             initWith(getByName("debug"))
@@ -39,6 +48,8 @@ android {
             versionNameSuffix = "-STAGING"
             buildConfigField("boolean", "ENABLE_EXTENSIVE_LOGGING", "true")
             buildConfigField("boolean", "USE_MOCK_NDI_SOURCES", "true")
+            buildConfigField("boolean", "ENABLE_PERFORMANCE_LOGGING", "true")
+            buildConfigField("int", "TARGET_FPS", "25") // Lower FPS for staging testing
         }
     }
     compileOptions {
@@ -57,6 +68,8 @@ android {
             version = "3.22.1"
         }
     }
+    
+    ndkVersion = "25.1.8937393"
 
     packaging {
         jniLibs {

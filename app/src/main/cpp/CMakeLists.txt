@@ -15,6 +15,7 @@ add_library(
     SHARED
     native-lib.cpp
     ndi_wrapper.cpp
+    pixel_converter.cpp
 )
 
 # Buscar librerías del sistema

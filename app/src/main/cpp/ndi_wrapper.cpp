@@ -24,7 +24,7 @@ static bool has_video_frame = false;
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_ndiplayer_oto_MainActivity_nativeInitializeNDI(JNIEnv *env, jobject thiz) {
-    LOGI("Initializing NDI SDK - FULL MODE");
+    LOGI("Initializing NDI SDK - FULL MODE with low-performance optimizations");
 
     try {
         if (!NDIlib_initialize()) {
@@ -36,7 +36,7 @@ Java_ndiplayer_oto_MainActivity_nativeInitializeNDI(JNIEnv *env, jobject thiz) {
         memset(&current_video_frame, 0, sizeof(current_video_frame));
         has_video_frame = false;
         
-        LOGI("NDI SDK initialized successfully");
+        LOGI("NDI SDK initialized successfully with performance optimizations");
         return JNI_TRUE;
         
     } catch (...) {
@@ -571,6 +571,8 @@ Java_ndiplayer_oto_MainActivity_nativeConnectToSourceByIndex(JNIEnv *env, jobjec
         recv_desc.p_ndi_recv_name = "Android NDI Player";
         recv_desc.bandwidth = NDIlib_recv_bandwidth_highest; // Use highest quality
         recv_desc.allow_video_fields = true;
+        // CRITICAL: Set specific color format for consistent color reproduction
+        recv_desc.color_format = NDIlib_recv_color_format_BGRX_BGRA; // Consistent BGRA format
         
         LOGI("Creating NDI receiver with settings...");
         

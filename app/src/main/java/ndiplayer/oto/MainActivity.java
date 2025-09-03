@@ -27,10 +27,13 @@ import android.os.Build;
 import java.util.ArrayList;
 import java.util.Arrays;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+
 public class MainActivity extends Activity {
     private static final String TAG = "NDIPlayer";
     
-    // NDI FourCC constants
+    // NDI FourCC constants for color format detection
     private static final int NDI_FOURCC_UYVY = ('U' << 0) | ('Y' << 8) | ('V' << 16) | ('Y' << 24);
     private static final int NDI_FOURCC_BGRA = ('B' << 0) | ('G' << 8) | ('R' << 16) | ('A' << 24);
     private static final int NDI_FOURCC_RGBA = ('R' << 0) | ('G' << 8) | ('B' << 16) | ('A' << 24);
@@ -52,6 +55,17 @@ public class MainActivity extends Activity {
     private long lastFrameTime = 0;
     private int droppedFrames = 0;
     private static final long TARGET_FRAME_TIME = 33; // ~30 FPS (33ms per frame)
+    
+    // Object pooling for performance optimization
+    private final Pool<Bitmap> bitmapPool = new Pool<>(3); // Pool of 3 bitmaps
+    private final Pool<int[]> pixelPool = new Pool<>(3);   // Pool of 3 pixel arrays
+    private int currentWidth = 0, currentHeight = 0;
+    
+    // Async processing
+    private Thread processingThread;
+    private final Object frameLock = new Object();
+    private volatile byte[] pendingFrameData;
+    private volatile int pendingWidth, pendingHeight;
     
     // UI state variables
     private boolean isFullscreen = false;
@@ -82,6 +96,34 @@ public class MainActivity extends Activity {
     private native void nativeCleanup();
     private native byte[] nativeGetFrameData();
     private native int nativeGetFrameFourCC();
+    
+    // Optimized native methods for performance
+    private native void nativeConvertBGRAToARGB(byte[] bgraData, int[] argbPixels, int width, int height);
+    private native void nativeConvertUYVYToARGB(byte[] uyvyData, int[] argbPixels, int width, int height);
+    private native Bitmap nativeCreateOptimizedBitmap(int[] pixels, int width, int height);
+    
+    // Object pooling class for memory efficiency
+    private static class Pool<T> {
+        private final BlockingQueue<T> pool;
+        
+        public Pool(int maxSize) {
+            this.pool = new LinkedBlockingQueue<>(maxSize);
+        }
+        
+        public T acquire() {
+            return pool.poll();
+        }
+        
+        public void release(T item) {
+            if (item != null) {
+                pool.offer(item);
+            }
+        }
+        
+        public void clear() {
+            pool.clear();
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -597,10 +639,37 @@ public class MainActivity extends Activity {
     }
     
     private void startFrameCapture() {
-        Log.d(TAG, "Starting optimized frame capture thread");
+        Log.d(TAG, "Starting optimized frame capture with async processing");
         
+        // Start frame processing thread
+        processingThread = new Thread(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY);
+            
+            while (isConnected && !Thread.currentThread().isInterrupted()) {
+                try {
+                    synchronized (frameLock) {
+                        if (pendingFrameData != null) {
+                            // Process the pending frame
+                            Bitmap bitmap = createBitmapFromFrameData(pendingFrameData, pendingWidth, pendingHeight);
+                            if (bitmap != null) {
+                                runOnUiThread(() -> videoView.setImageBitmap(bitmap));
+                            }
+                            pendingFrameData = null; // Clear processed frame
+                        }
+                    }
+                    Thread.sleep(16); // ~60 FPS processing
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in frame processing", e);
+                }
+            }
+        });
+        processingThread.start();
+        
+        // Start frame capture thread
         captureThread = new Thread(() -> {
-            // Set high priority for video processing
+            // Set high priority for video capture
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY);
             
             int frameCount = 0;
@@ -611,15 +680,14 @@ public class MainActivity extends Activity {
                 
                 try {
                     // Use shorter timeout for more responsive capture
-                    int result = nativeCaptureFrame(dimensions, 50); // Reduced from 100ms to 50ms
+                    int result = nativeCaptureFrame(dimensions, 33); // 33ms for ~30fps
                     
                     if (result == 1) { // Video frame received
                         frameCount++;
                         final int width = dimensions[0];
                         final int height = dimensions[1];
-                        final int currentFrameCount = frameCount;
                         
-                        // Frame rate control - skip frames if we're going too fast
+                        // Frame rate control - skip frames if processing is behind
                         long currentTime = System.currentTimeMillis();
                         long timeSinceLastFrame = currentTime - lastFrameTime;
                         
@@ -636,45 +704,28 @@ public class MainActivity extends Activity {
                             byte[] frameData = nativeGetFrameData();
                             
                             if (frameData != null && frameData.length > 0) {
-                                // Create bitmap from frame data
-                                Bitmap bitmap = createBitmapFromFrameData(frameData, width, height);
-                                if (bitmap != null) {
-                                    runOnUiThread(() -> {
-                                        // Update video display
-                                        videoView.setImageBitmap(bitmap);
-                                    });
-                                    
-                                    // Log performance stats every 5 seconds (150 frames at 30fps)
-                                    if (currentFrameCount % 150 == 0) {
-                                        Log.d(TAG, String.format("Performance: Frame #%d (%dx%d) - Dropped: %d", 
-                                            currentFrameCount, width, height, droppedFrames));
+                                // Queue frame for async processing
+                                synchronized (frameLock) {
+                                    if (pendingFrameData == null) { // Only queue if no pending frame
+                                        pendingFrameData = frameData;
+                                        pendingWidth = width;
+                                        pendingHeight = height;
                                     }
                                 }
-                            } else {
-                                // Create test pattern when no frame data (less frequently)
-                                if (currentFrameCount % 10 == 0) { // Only every 10th frame for test pattern
-                                    Bitmap testBitmap = createTestPattern(width, height);
-                                    if (testBitmap != null) {
-                                        runOnUiThread(() -> {
-                                            videoView.setImageBitmap(testBitmap);
-                                        });
-                                    }
+                                
+                                // Log performance stats every 5 seconds (150 frames at 30fps)
+                                if (frameCount % 150 == 0) {
+                                    Log.d(TAG, String.format("Performance: Frame #%d (%dx%d) - Dropped: %d", 
+                                        frameCount, width, height, droppedFrames));
                                 }
                             }
                         }
-                    } else if (result == 2) { // Audio frame received
-                        // Handle audio frame if needed
                     } else if (result == 0) { // No frame
-                        // Normal timeout, continue without sleep
+                        // Brief pause when no frame available
+                        Thread.sleep(1);
                     } else { // Error
                         Log.w(TAG, "Frame capture error: " + result);
-                        Thread.sleep(50); // Brief pause on error (reduced from 100ms)
-                    }
-                    
-                    // Dynamic sleep based on processing time
-                    long processingTime = System.currentTimeMillis() - frameStartTime;
-                    if (processingTime < 16) { // If we processed faster than 60fps
-                        Thread.sleep(1); // Minimal sleep to prevent CPU spinning
+                        Thread.sleep(10); // Brief pause on error
                     }
                     
                 } catch (InterruptedException e) {
@@ -683,7 +734,7 @@ public class MainActivity extends Activity {
                 } catch (Exception e) {
                     Log.e(TAG, "Error in frame capture", e);
                     try {
-                        Thread.sleep(500); // Pause on error
+                        Thread.sleep(100); // Pause on error
                     } catch (InterruptedException ie) {
                         break;
                     }
@@ -697,8 +748,10 @@ public class MainActivity extends Activity {
     }
     
     private void stopFrameCapture() {
+        Log.d(TAG, "Stopping optimized frame capture threads");
+        
+        // Stop capture thread
         if (captureThread != null && captureThread.isAlive()) {
-            Log.d(TAG, "Stopping optimized frame capture thread");
             captureThread.interrupt();
             try {
                 captureThread.join(1000); // Wait up to 1 second
@@ -708,11 +761,31 @@ public class MainActivity extends Activity {
             captureThread = null;
         }
         
+        // Stop processing thread
+        if (processingThread != null && processingThread.isAlive()) {
+            processingThread.interrupt();
+            try {
+                processingThread.join(1000); // Wait up to 1 second
+            } catch (InterruptedException e) {
+                Log.w(TAG, "Interrupted while waiting for processing thread to stop");
+            }
+            processingThread = null;
+        }
+        
+        // Clear pending frame data
+        synchronized (frameLock) {
+            pendingFrameData = null;
+        }
+        
+        // Clear object pools
+        bitmapPool.clear();
+        pixelPool.clear();
+        
         // Reset performance counters
         lastFrameTime = 0;
         droppedFrames = 0;
         
-        Log.d(TAG, "Frame capture stopped and performance counters reset");
+        Log.d(TAG, "All frame capture threads stopped and resources cleared");
     }
 
     @Override
@@ -789,29 +862,36 @@ public class MainActivity extends Activity {
                 return null;
             }
             
-            // Create bitmap with optimal configuration
-            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            int[] pixels = new int[width * height];
+            // Get or create pixel array from pool
+            int[] pixels = pixelPool.acquire();
+            if (pixels == null || pixels.length < width * height) {
+                pixels = new int[width * height];
+            }
+
+            // TEMPORARY: Manual conversion for debugging
+            Log.d(TAG, "Manual BGRA conversion - first few bytes: " + 
+                String.format("%02X %02X %02X %02X", 
+                frameData[0] & 0xFF, frameData[1] & 0xFF, 
+                frameData[2] & 0xFF, frameData[3] & 0xFF));
             
-            // Optimized pixel conversion - process in chunks for better cache efficiency
-            int chunkSize = Math.min(2048, pixels.length); // Process 2048 pixels at a time
-            for (int chunk = 0; chunk < pixels.length; chunk += chunkSize) {
-                int endIndex = Math.min(chunk + chunkSize, pixels.length);
-                
-                for (int i = chunk; i < endIndex; i++) {
-                    int byteIndex = i * 4;
+            for (int i = 0; i < width * height; i++) {
+                int byteIndex = i * 4;
+                if (byteIndex + 3 < frameData.length) {
+                    // BGRA format from NDI
+                    int b = frameData[byteIndex] & 0xFF;
+                    int g = frameData[byteIndex + 1] & 0xFF;
+                    int r = frameData[byteIndex + 2] & 0xFF;
+                    int a = frameData[byteIndex + 3] & 0xFF;
                     
-                    // BGRA format from NDI - optimized bit operations
-                    int bgra = ((frameData[byteIndex + 3] & 0xFF) << 24) |  // A
-                               ((frameData[byteIndex + 2] & 0xFF) << 16) |  // R
-                               ((frameData[byteIndex + 1] & 0xFF) << 8) |   // G
-                               (frameData[byteIndex] & 0xFF);               // B
-                    
-                    pixels[i] = bgra;
+                    // Convert to ARGB for Android (swap B and R)
+                    pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
                 }
             }
+
+            // Create bitmap using optimized native method
+            Bitmap bitmap = nativeCreateOptimizedBitmap(pixels, width, height);            // Return pixel array to pool
+            pixelPool.release(pixels);
             
-            bitmap.setPixels(pixels, 0, width, 0, 0, width, height);
             return bitmap;
             
         } catch (Exception e) {
@@ -897,34 +977,21 @@ public class MainActivity extends Activity {
                 return null;
             }
             
-            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            int[] pixels = new int[width * height];
-            
-            // Convert UYVY to RGB
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x += 2) {
-                    int index = (y * width + x) * 2;
-                    if (index + 3 < frameData.length) {
-                        // UYVY format: U Y V Y (for 2 pixels)
-                        int u = frameData[index] & 0xFF;
-                        int y1 = frameData[index + 1] & 0xFF;
-                        int v = frameData[index + 2] & 0xFF;
-                        int y2 = frameData[index + 3] & 0xFF;
-                        
-                        // Convert YUV to RGB for first pixel
-                        int[] rgb1 = convertYUVtoRGB(y1, u, v);
-                        pixels[y * width + x] = (255 << 24) | (rgb1[0] << 16) | (rgb1[1] << 8) | rgb1[2];
-                        
-                        // Convert YUV to RGB for second pixel
-                        if (x + 1 < width) {
-                            int[] rgb2 = convertYUVtoRGB(y2, u, v);
-                            pixels[y * width + x + 1] = (255 << 24) | (rgb2[0] << 16) | (rgb2[1] << 8) | rgb2[2];
-                        }
-                    }
-                }
+            // Get or create pixel array from pool
+            int[] pixels = pixelPool.acquire();
+            if (pixels == null || pixels.length < width * height) {
+                pixels = new int[width * height];
             }
             
-            bitmap.setPixels(pixels, 0, width, 0, 0, width, height);
+            // Use optimized native conversion
+            nativeConvertUYVYToARGB(frameData, pixels, width, height);
+            
+            // Create bitmap using optimized native method
+            Bitmap bitmap = nativeCreateOptimizedBitmap(pixels, width, height);
+            
+            // Return pixel array to pool
+            pixelPool.release(pixels);
+            
             return bitmap;
             
         } catch (Exception e) {
