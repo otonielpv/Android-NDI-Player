@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Leanback" parent="@style/Theme.Leanback.Browse">
+    <style name="Theme.Leanback" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:colorPrimary">@color/primary_color</item>
         <item name="android:colorPrimaryDark">@color/primary_dark_color</item>
         <item name="android:colorAccent">@color/accent_color</item>
@@ -14,4 +14,3 @@
         <item name="android:windowBackground">@color/background_color</item>
     </style>
 </resources>
-

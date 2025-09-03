@@ -30,6 +30,16 @@
 
         <activity
             android:name=".MainActivity"
+            android:exported="false"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
+            android:theme="@android:style/Theme.Material.Light"
+            android:hardwareAccelerated="true"
+            android:launchMode="singleTop">
+        </activity>
+
+        <!-- Actividad optimizada para dispositivos de bajo rendimiento -->
+        <activity
+            android:name=".MainActivityOptimized"
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
             android:theme="@android:style/Theme.Material.Light"
@@ -40,6 +50,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Servicios optimizados - Ejecutándose en el mismo proceso para simplicidad -->
+        <service
+            android:name=".service.NDIDiscoveryService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
+            android:name=".service.NDIRenderService"
+            android:enabled="true"
+            android:exported="false" />
 
         <!-- PlayerActivity disabled for ultra minimal testing -->
         <!--
