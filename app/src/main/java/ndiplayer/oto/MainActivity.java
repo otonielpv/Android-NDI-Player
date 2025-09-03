@@ -323,20 +323,8 @@ public class MainActivity extends Activity {
         });
         
         // Añadir vistas al layout
-        
-        // === LOGO SECTION ===
-        ImageView logoView = new ImageView(this);
-        logoView.setImageResource(R.drawable.logo_ndi_player);
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
-            120, 120); // 120dp x 120dp
-        logoParams.gravity = android.view.Gravity.CENTER_HORIZONTAL;
-        logoParams.setMargins(0, 20, 0, 10);
-        logoView.setLayoutParams(logoParams);
-        logoView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        
         titleText.setText("🎥 NDI Player");
         
-        layout.addView(logoView); // Logo primero
         layout.addView(titleText);
         layout.addView(statusText);
         layout.addView(ndiSourcesList, new LinearLayout.LayoutParams(
