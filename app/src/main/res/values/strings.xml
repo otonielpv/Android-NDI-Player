@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NDI Player</string>
+    <string name="browse_title">Fuentes NDI</string>
+    <string name="related_movies">Videos relacionados</string>
+    <string name="grid_view">Vista en cuadrícula</string>
+    <string name="error_fragment">Error</string>
+    <string name="personal_settings">Configuración personal</string>
+    <string name="watch_trailer_1">Ver trailer</string>
+    <string name="watch_trailer_2">Trailer personal</string>
+    <string name="rent_1">Alquilar por $3.99</string>
+    <string name="rent_2">Alquilar por $1.99</string>
+    <string name="buy_1">Comprar $9.99</string>
+    <string name="buy_2">Comprar $14.99</string>
+    <string name="movie">Película</string>
+    <string name="should_start">¿Debería empezar?</string>
+    <string name="ndi_source_not_found">Fuente NDI no encontrada</string>
+    <string name="connecting_to_ndi">Conectando a fuente NDI...</string>
+    <string name="ndi_connection_failed">Error al conectar con NDI</string>
+    <string name="searching_ndi_sources">Buscando fuentes NDI...</string>
+    <string name="no_ndi_sources">No se encontraron fuentes NDI</string>
+    <string name="refresh">Actualizar</string>
+    <string name="refresh_sources">Actualizar Fuentes</string>
+</resources>

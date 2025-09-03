@@ -1,0 +1,79 @@
+# Built application files
+*.apk
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+
+# Gradle files
+*.iml
+.gradle/
+/build
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+/.idea/dictionaries
+/.idea/gradle.xml
+/.idea/tasks.xml
+
+# Android Studio captures folder
+/captures
+
+# External native build folder generated in Android Studio 2.2 and later
+.externalNativeBuild
+.cxx
+
+# Log Files
+*.log
+
+# Android Profiling
+*.hprof
+
+# NDI test files and logs
+ndi_test_log.txt
+
+# CMake build directories
+cmake-build-*/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Backup files
+*.bak
+*.backup
+
+# Test results
+test-results/
+reports/
+
+# Lint
+lint/
+
+# Keystore files (uncomment if you don't want to include them)
+#*.jks
+#*.keystore

@@ -1,0 +1,82 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace = "ndiplayer.oto"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "ndiplayer.oto"
+        minSdk = 21
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+    }
+
+    buildTypes {
+        debug {
+            isDebuggable = true
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-DEBUG"
+        }
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        create("staging") {
+            initWith(getByName("debug"))
+            isDebuggable = true
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-STAGING"
+            buildConfigField("boolean", "ENABLE_EXTENSIVE_LOGGING", "true")
+            buildConfigField("boolean", "USE_MOCK_NDI_SOURCES", "true")
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        viewBinding = true
+        buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libc++_shared.so"
+            pickFirsts += "**/libndi.so"
+        }
+    }
+}
+
+dependencies {
+    // LEANBACK DISABLED FOR ULTRA MINIMAL TESTING
+    // implementation("androidx.leanback:leanback:1.0.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.core:core:1.12.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-livedata:2.7.0")
+    // MEDIA DISABLED FOR ULTRA MINIMAL TESTING
+    // implementation("com.google.android.exoplayer:exoplayer:2.19.1")
+    // implementation("androidx.media3:media3-exoplayer:1.2.1")
+    // implementation("androidx.media3:media3-ui:1.2.1")
+    // implementation("androidx.media3:media3-common:1.2.1")
+}
