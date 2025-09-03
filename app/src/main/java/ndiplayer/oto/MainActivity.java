@@ -47,6 +47,14 @@ public class MainActivity extends Activity {
     private Thread captureThread;
     private ImageView videoView;
     
+    // Performance optimization variables
+    private Bitmap currentBitmap;
+    private Bitmap recycleBitmap;
+    private long lastFrameTime = 0;
+    private static final long TARGET_FRAME_TIME = 33; // ~30 FPS (33ms per frame)
+    private boolean skipFrame = false;
+    private int droppedFrames = 0;
+    
     // UI state variables
     private boolean isFullscreen = false;
     private LinearLayout mainLayout;
@@ -567,15 +575,22 @@ public class MainActivity extends Activity {
     }
     
     private void startFrameCapture() {
-        Log.d(TAG, "Starting frame capture thread");
+        Log.d(TAG, "Starting optimized frame capture thread");
         
         captureThread = new Thread(() -> {
+            // Set high priority for video processing
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY);
+            
             int frameCount = 0;
             int[] dimensions = new int[2]; // [width, height]
+            long frameStartTime;
             
             while (isConnected && !Thread.currentThread().isInterrupted()) {
+                frameStartTime = System.currentTimeMillis();
+                
                 try {
-                    int result = nativeCaptureFrame(dimensions, 100); // 100ms timeout
+                    // Use shorter timeout for more responsive capture
+                    int result = nativeCaptureFrame(dimensions, 16); // 16ms timeout (~60fps)
                     
                     if (result == 1) { // Video frame received
                         frameCount++;
@@ -583,57 +598,88 @@ public class MainActivity extends Activity {
                         final int height = dimensions[1];
                         final int currentFrameCount = frameCount;
                         
-                        // Get frame data from native code
-                        byte[] frameData = nativeGetFrameData();
-                        Log.d(TAG, String.format("Frame data: %s, length: %d", 
-                                (frameData != null ? "received" : "null"), 
-                                (frameData != null ? frameData.length : 0)));
+                        // Frame rate control - skip frames if we're going too fast
+                        long currentTime = System.currentTimeMillis();
+                        long timeSinceLastFrame = currentTime - lastFrameTime;
                         
-                        if (frameData != null && frameData.length > 0) {
-                            // Create bitmap from frame data
-                            Bitmap bitmap = createBitmapFromFrameData(frameData, width, height);
-                            if (bitmap != null) {
-                                runOnUiThread(() -> {
-                                    // Update video display
-                                    videoView.setImageBitmap(bitmap);
-                                });
-                                
-                                if (currentFrameCount % 30 == 0) { // Log every 30 frames
-                                    Log.d(TAG, String.format("Video frame #%d - %dx%d", currentFrameCount, width, height));
-                                }
-                            }
+                        if (timeSinceLastFrame < TARGET_FRAME_TIME) {
+                            skipFrame = true;
+                            droppedFrames++;
                         } else {
-                            // Create test pattern when no frame data
-                            Bitmap testBitmap = createTestPattern(width, height);
-                            if (testBitmap != null) {
-                                runOnUiThread(() -> {
-                                    videoView.setImageBitmap(testBitmap);
-                                });
+                            skipFrame = false;
+                            lastFrameTime = currentTime;
+                        }
+                        
+                        if (!skipFrame) {
+                            // Get frame data from native code
+                            byte[] frameData = nativeGetFrameData();
+                            
+                            if (frameData != null && frameData.length > 0) {
+                                // Create bitmap efficiently with recycling
+                                Bitmap bitmap = createOptimizedBitmap(frameData, width, height);
+                                if (bitmap != null) {
+                                    runOnUiThread(() -> {
+                                        // Recycle old bitmap to free memory
+                                        if (currentBitmap != null && !currentBitmap.isRecycled()) {
+                                            recycleBitmap = currentBitmap;
+                                        }
+                                        currentBitmap = bitmap;
+                                        videoView.setImageBitmap(bitmap);
+                                        
+                                        // Recycle old bitmap after setting new one
+                                        if (recycleBitmap != null && !recycleBitmap.isRecycled()) {
+                                            recycleBitmap.recycle();
+                                            recycleBitmap = null;
+                                        }
+                                    });
+                                    
+                                    // Log performance stats every 5 seconds (150 frames at 30fps)
+                                    if (currentFrameCount % 150 == 0) {
+                                        Log.d(TAG, String.format("Performance: Frame #%d (%dx%d) - Dropped: %d", 
+                                            currentFrameCount, width, height, droppedFrames));
+                                    }
+                                }
+                            } else {
+                                // Create test pattern when no frame data (less frequently)
+                                if (currentFrameCount % 10 == 0) { // Only every 10th frame for test pattern
+                                    Bitmap testBitmap = createTestPattern(width, height);
+                                    if (testBitmap != null) {
+                                        runOnUiThread(() -> {
+                                            videoView.setImageBitmap(testBitmap);
+                                        });
+                                    }
+                                }
                             }
                         }
                     } else if (result == 2) { // Audio frame received
                         // Handle audio frame if needed
                     } else if (result == 0) { // No frame
-                        // Normal timeout, continue
+                        // Normal timeout, continue immediately without sleep
                     } else { // Error
                         Log.w(TAG, "Frame capture error: " + result);
-                        Thread.sleep(100); // Brief pause on error
+                        Thread.sleep(50); // Brief pause on error (reduced from 100ms)
+                    }
+                    
+                    // Dynamic sleep based on processing time
+                    long processingTime = System.currentTimeMillis() - frameStartTime;
+                    if (processingTime < 16) { // If we processed faster than 60fps
+                        Thread.sleep(1); // Minimal sleep to prevent CPU spinning
                     }
                     
                 } catch (InterruptedException e) {
-                    Log.d(TAG, "Frame capture thread interrupted");
+                    Log.d(TAG, "Optimized frame capture thread interrupted");
                     break;
                 } catch (Exception e) {
-                    Log.e(TAG, "Error in frame capture", e);
+                    Log.e(TAG, "Error in optimized frame capture", e);
                     try {
-                        Thread.sleep(500); // Pause on error
+                        Thread.sleep(100); // Pause on error
                     } catch (InterruptedException ie) {
                         break;
                     }
                 }
             }
             
-            Log.d(TAG, "Frame capture thread ended");
+            Log.d(TAG, "Optimized frame capture thread ended");
         });
         
         captureThread.start();
@@ -641,7 +687,7 @@ public class MainActivity extends Activity {
     
     private void stopFrameCapture() {
         if (captureThread != null && captureThread.isAlive()) {
-            Log.d(TAG, "Stopping frame capture thread");
+            Log.d(TAG, "Stopping optimized frame capture thread");
             captureThread.interrupt();
             try {
                 captureThread.join(1000); // Wait up to 1 second
@@ -650,6 +696,22 @@ public class MainActivity extends Activity {
             }
             captureThread = null;
         }
+        
+        // Clean up bitmap memory
+        if (currentBitmap != null && !currentBitmap.isRecycled()) {
+            currentBitmap.recycle();
+            currentBitmap = null;
+        }
+        if (recycleBitmap != null && !recycleBitmap.isRecycled()) {
+            recycleBitmap.recycle();
+            recycleBitmap = null;
+        }
+        
+        // Reset performance counters
+        lastFrameTime = 0;
+        droppedFrames = 0;
+        
+        Log.d(TAG, "Frame capture stopped and memory cleaned");
     }
 
     @Override
@@ -752,6 +814,74 @@ public class MainActivity extends Activity {
         }
     }
     
+    // Optimized bitmap creation with memory management
+    private Bitmap createOptimizedBitmap(byte[] frameData, int width, int height) {
+        try {
+            // Get the FourCC format of the current frame
+            int fourCC = nativeGetFrameFourCC();
+            
+            // Use BGRA as default (most common for NDI)
+            if (fourCC == NDI_FOURCC_BGRA || fourCC == 0) {
+                return createOptimizedBGRABitmap(frameData, width, height);
+            } else {
+                // Fallback to original method for other formats
+                return createBitmapFromFrameData(frameData, width, height);
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating optimized bitmap", e);
+            return null;
+        }
+    }
+    
+    // Highly optimized BGRA bitmap creation
+    private Bitmap createOptimizedBGRABitmap(byte[] frameData, int width, int height) {
+        try {
+            int expectedSize = width * height * 4;
+            if (frameData.length < expectedSize) {
+                Log.w(TAG, "BGRA frame data too small: " + frameData.length + " expected: " + expectedSize);
+                return null;
+            }
+            
+            // Create bitmap with optimal configuration
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            
+            // Use direct buffer operations for better performance
+            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(expectedSize);
+            buffer.put(frameData, 0, expectedSize);
+            buffer.rewind();
+            
+            // Convert BGRA to ARGB in chunks for better cache efficiency
+            int[] pixels = new int[width * height];
+            int pixelIndex = 0;
+            
+            // Process in chunks of 1024 pixels for better memory locality
+            int chunkSize = Math.min(1024, pixels.length);
+            for (int chunk = 0; chunk < pixels.length; chunk += chunkSize) {
+                int endIndex = Math.min(chunk + chunkSize, pixels.length);
+                
+                for (int i = chunk; i < endIndex; i++) {
+                    int byteIndex = i * 4;
+                    
+                    // BGRA format from NDI - optimized bit operations
+                    int bgra = ((frameData[byteIndex + 3] & 0xFF) << 24) |  // A
+                               ((frameData[byteIndex + 2] & 0xFF) << 16) |  // R
+                               ((frameData[byteIndex + 1] & 0xFF) << 8) |   // G
+                               (frameData[byteIndex] & 0xFF);               // B
+                    
+                    pixels[i] = bgra;
+                }
+            }
+            
+            bitmap.setPixels(pixels, 0, width, 0, 0, width, height);
+            return bitmap;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating optimized BGRA bitmap", e);
+            return null;
+        }
+    }
+
     private Bitmap createBitmapFromRGBA(byte[] frameData, int width, int height) {
         try {
             int expectedSize = width * height * 4;

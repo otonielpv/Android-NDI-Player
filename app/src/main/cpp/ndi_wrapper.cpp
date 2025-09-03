@@ -327,55 +327,56 @@ Java_ndiplayer_oto_MainActivity_nativeCaptureFrame(JNIEnv *env, jobject thiz, ji
     }
     
     try {
-        // Free any previous video frame
-        if (has_video_frame) {
+        // Free any previous video frame - optimized check
+        if (has_video_frame && current_video_frame.p_data) {
             NDIlib_recv_free_video_v2(ndi_recv, &current_video_frame);
             has_video_frame = false;
+            memset(&current_video_frame, 0, sizeof(current_video_frame));
         }
         
-        // Capture frame using official example pattern
-        NDIlib_video_frame_v2_t video_frame;
-        NDIlib_audio_frame_v2_t audio_frame;
-        NDIlib_metadata_frame_t metadata_frame;
+        // Optimized frame capture - reuse structures
+        static NDIlib_video_frame_v2_t video_frame;
+        static NDIlib_audio_frame_v2_t audio_frame;
+        static NDIlib_metadata_frame_t metadata_frame;
         
-        // Capture with specified timeout
+        // Clear structures for reuse
+        memset(&video_frame, 0, sizeof(video_frame));
+        memset(&audio_frame, 0, sizeof(audio_frame));
+        memset(&metadata_frame, 0, sizeof(metadata_frame));
+        
+        // Capture with specified timeout - optimized call
         NDIlib_frame_type_e frame_type = NDIlib_recv_capture_v2(ndi_recv, &video_frame, &audio_frame, &metadata_frame, timeoutMs);
         
         switch (frame_type) {
             case NDIlib_frame_type_none:
                 return 0; // No frame
                 
-            case NDIlib_frame_type_video:
-                LOGI("Video frame received: %dx%d, FourCC: 0x%08X", 
-                     video_frame.xres, video_frame.yres, video_frame.FourCC);
+            case NDIlib_frame_type_video: {
+                // Optimized video frame processing
                 current_video_frame = video_frame;
                 has_video_frame = true;
                 
-                // Set dimensions in the array
+                // Fast dimension setting with error checking
                 if (widthHeight) {
                     jint* dimensions = env->GetIntArrayElements(widthHeight, nullptr);
                     if (dimensions) {
-                        LOGI("Setting dimensions: %d x %d", video_frame.xres, video_frame.yres);
                         dimensions[0] = video_frame.xres;
                         dimensions[1] = video_frame.yres;
                         env->ReleaseIntArrayElements(widthHeight, dimensions, 0);
-                        LOGI("Dimensions set successfully in array");
-                    } else {
-                        LOGE("Failed to get array elements for dimensions");
                     }
-                } else {
-                    LOGE("widthHeight array is null");
                 }
                 
                 return 1; // Video frame
+            }
                 
             case NDIlib_frame_type_audio:
-                LOGI("Audio frame received: %d samples", audio_frame.no_samples);
+                // Quick audio frame cleanup
                 NDIlib_recv_free_audio_v2(ndi_recv, &audio_frame);
                 return 2; // Audio frame
                 
             case NDIlib_frame_type_metadata:
-                LOGI("Metadata frame received");
+                // Quick metadata cleanup
+                NDIlib_recv_free_metadata(ndi_recv, &metadata_frame);
                 return 3; // Metadata frame
                 
             default:
