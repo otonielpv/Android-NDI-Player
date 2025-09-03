@@ -322,61 +322,62 @@ Java_ndiplayer_oto_MainActivity_nativeConnectToSource(JNIEnv *env, jobject thiz,
 extern "C" JNIEXPORT jint JNICALL
 Java_ndiplayer_oto_MainActivity_nativeCaptureFrame(JNIEnv *env, jobject thiz, jintArray widthHeight, jint timeoutMs) {
     if (!ndi_recv) {
-        LOGE("No NDI receiver available for frame capture");
         return -1; // Error
     }
     
     try {
-        // Free any previous video frame - optimized check
+        // Free any previous video frame
         if (has_video_frame && current_video_frame.p_data) {
             NDIlib_recv_free_video_v2(ndi_recv, &current_video_frame);
             has_video_frame = false;
-            memset(&current_video_frame, 0, sizeof(current_video_frame));
         }
         
-        // Optimized frame capture - reuse structures
+        // Use static variables to reduce allocations
         static NDIlib_video_frame_v2_t video_frame;
         static NDIlib_audio_frame_v2_t audio_frame;
         static NDIlib_metadata_frame_t metadata_frame;
         
-        // Clear structures for reuse
+        // Clear structures
         memset(&video_frame, 0, sizeof(video_frame));
         memset(&audio_frame, 0, sizeof(audio_frame));
         memset(&metadata_frame, 0, sizeof(metadata_frame));
         
-        // Capture with specified timeout - optimized call
+        // Capture with specified timeout
         NDIlib_frame_type_e frame_type = NDIlib_recv_capture_v2(ndi_recv, &video_frame, &audio_frame, &metadata_frame, timeoutMs);
         
         switch (frame_type) {
             case NDIlib_frame_type_none:
                 return 0; // No frame
                 
-            case NDIlib_frame_type_video: {
-                // Optimized video frame processing
+            case NDIlib_frame_type_video:
+                // Reduced logging for better performance
                 current_video_frame = video_frame;
                 has_video_frame = true;
                 
-                // Fast dimension setting with error checking
+                // Fast dimension setting
                 if (widthHeight) {
                     jint* dimensions = env->GetIntArrayElements(widthHeight, nullptr);
                     if (dimensions) {
                         dimensions[0] = video_frame.xres;
                         dimensions[1] = video_frame.yres;
                         env->ReleaseIntArrayElements(widthHeight, dimensions, 0);
+                        LOGI("Dimensions set successfully in array");
+                    } else {
+                        LOGE("Failed to get array elements for dimensions");
                     }
+                } else {
+                    LOGE("widthHeight array is null");
                 }
                 
                 return 1; // Video frame
-            }
                 
             case NDIlib_frame_type_audio:
-                // Quick audio frame cleanup
+                LOGI("Audio frame received: %d samples", audio_frame.no_samples);
                 NDIlib_recv_free_audio_v2(ndi_recv, &audio_frame);
                 return 2; // Audio frame
                 
             case NDIlib_frame_type_metadata:
-                // Quick metadata cleanup
-                NDIlib_recv_free_metadata(ndi_recv, &metadata_frame);
+                LOGI("Metadata frame received");
                 return 3; // Metadata frame
                 
             default:

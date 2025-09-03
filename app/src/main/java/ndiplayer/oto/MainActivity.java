@@ -48,12 +48,9 @@ public class MainActivity extends Activity {
     private ImageView videoView;
     
     // Performance optimization variables
-    private Bitmap currentBitmap;
-    private Bitmap recycleBitmap;
     private long lastFrameTime = 0;
-    private static final long TARGET_FRAME_TIME = 33; // ~30 FPS (33ms per frame)
-    private boolean skipFrame = false;
     private int droppedFrames = 0;
+    private static final long TARGET_FRAME_TIME = 33; // ~30 FPS (33ms per frame)
     
     // UI state variables
     private boolean isFullscreen = false;
@@ -583,14 +580,13 @@ public class MainActivity extends Activity {
             
             int frameCount = 0;
             int[] dimensions = new int[2]; // [width, height]
-            long frameStartTime;
             
             while (isConnected && !Thread.currentThread().isInterrupted()) {
-                frameStartTime = System.currentTimeMillis();
+                long frameStartTime = System.currentTimeMillis();
                 
                 try {
                     // Use shorter timeout for more responsive capture
-                    int result = nativeCaptureFrame(dimensions, 16); // 16ms timeout (~60fps)
+                    int result = nativeCaptureFrame(dimensions, 50); // Reduced from 100ms to 50ms
                     
                     if (result == 1) { // Video frame received
                         frameCount++;
@@ -602,35 +598,25 @@ public class MainActivity extends Activity {
                         long currentTime = System.currentTimeMillis();
                         long timeSinceLastFrame = currentTime - lastFrameTime;
                         
+                        boolean shouldProcessFrame = true;
                         if (timeSinceLastFrame < TARGET_FRAME_TIME) {
-                            skipFrame = true;
+                            shouldProcessFrame = false;
                             droppedFrames++;
                         } else {
-                            skipFrame = false;
                             lastFrameTime = currentTime;
                         }
                         
-                        if (!skipFrame) {
+                        if (shouldProcessFrame) {
                             // Get frame data from native code
                             byte[] frameData = nativeGetFrameData();
                             
                             if (frameData != null && frameData.length > 0) {
-                                // Create bitmap efficiently with recycling
-                                Bitmap bitmap = createOptimizedBitmap(frameData, width, height);
+                                // Create bitmap from frame data
+                                Bitmap bitmap = createBitmapFromFrameData(frameData, width, height);
                                 if (bitmap != null) {
                                     runOnUiThread(() -> {
-                                        // Recycle old bitmap to free memory
-                                        if (currentBitmap != null && !currentBitmap.isRecycled()) {
-                                            recycleBitmap = currentBitmap;
-                                        }
-                                        currentBitmap = bitmap;
+                                        // Update video display
                                         videoView.setImageBitmap(bitmap);
-                                        
-                                        // Recycle old bitmap after setting new one
-                                        if (recycleBitmap != null && !recycleBitmap.isRecycled()) {
-                                            recycleBitmap.recycle();
-                                            recycleBitmap = null;
-                                        }
                                     });
                                     
                                     // Log performance stats every 5 seconds (150 frames at 30fps)
@@ -654,7 +640,7 @@ public class MainActivity extends Activity {
                     } else if (result == 2) { // Audio frame received
                         // Handle audio frame if needed
                     } else if (result == 0) { // No frame
-                        // Normal timeout, continue immediately without sleep
+                        // Normal timeout, continue without sleep
                     } else { // Error
                         Log.w(TAG, "Frame capture error: " + result);
                         Thread.sleep(50); // Brief pause on error (reduced from 100ms)
@@ -667,19 +653,19 @@ public class MainActivity extends Activity {
                     }
                     
                 } catch (InterruptedException e) {
-                    Log.d(TAG, "Optimized frame capture thread interrupted");
+                    Log.d(TAG, "Frame capture thread interrupted");
                     break;
                 } catch (Exception e) {
-                    Log.e(TAG, "Error in optimized frame capture", e);
+                    Log.e(TAG, "Error in frame capture", e);
                     try {
-                        Thread.sleep(100); // Pause on error
+                        Thread.sleep(500); // Pause on error
                     } catch (InterruptedException ie) {
                         break;
                     }
                 }
             }
             
-            Log.d(TAG, "Optimized frame capture thread ended");
+            Log.d(TAG, "Frame capture thread ended");
         });
         
         captureThread.start();
@@ -697,21 +683,11 @@ public class MainActivity extends Activity {
             captureThread = null;
         }
         
-        // Clean up bitmap memory
-        if (currentBitmap != null && !currentBitmap.isRecycled()) {
-            currentBitmap.recycle();
-            currentBitmap = null;
-        }
-        if (recycleBitmap != null && !recycleBitmap.isRecycled()) {
-            recycleBitmap.recycle();
-            recycleBitmap = null;
-        }
-        
         // Reset performance counters
         lastFrameTime = 0;
         droppedFrames = 0;
         
-        Log.d(TAG, "Frame capture stopped and memory cleaned");
+        Log.d(TAG, "Frame capture stopped and performance counters reset");
     }
 
     @Override
@@ -788,75 +764,12 @@ public class MainActivity extends Activity {
                 return null;
             }
             
-            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            int[] pixels = new int[width * height];
-            
-            for (int i = 0; i < pixels.length; i++) {
-                int byteIndex = i * 4;
-                if (byteIndex + 3 < frameData.length) {
-                    // BGRA format from NDI
-                    int b = frameData[byteIndex] & 0xFF;
-                    int g = frameData[byteIndex + 1] & 0xFF;
-                    int r = frameData[byteIndex + 2] & 0xFF;
-                    int a = frameData[byteIndex + 3] & 0xFF;
-                    
-                    // Convert to ARGB for Android
-                    pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
-                }
-            }
-            
-            bitmap.setPixels(pixels, 0, width, 0, 0, width, height);
-            return bitmap;
-            
-        } catch (Exception e) {
-            Log.e(TAG, "Error creating BGRA bitmap", e);
-            return null;
-        }
-    }
-    
-    // Optimized bitmap creation with memory management
-    private Bitmap createOptimizedBitmap(byte[] frameData, int width, int height) {
-        try {
-            // Get the FourCC format of the current frame
-            int fourCC = nativeGetFrameFourCC();
-            
-            // Use BGRA as default (most common for NDI)
-            if (fourCC == NDI_FOURCC_BGRA || fourCC == 0) {
-                return createOptimizedBGRABitmap(frameData, width, height);
-            } else {
-                // Fallback to original method for other formats
-                return createBitmapFromFrameData(frameData, width, height);
-            }
-            
-        } catch (Exception e) {
-            Log.e(TAG, "Error creating optimized bitmap", e);
-            return null;
-        }
-    }
-    
-    // Highly optimized BGRA bitmap creation
-    private Bitmap createOptimizedBGRABitmap(byte[] frameData, int width, int height) {
-        try {
-            int expectedSize = width * height * 4;
-            if (frameData.length < expectedSize) {
-                Log.w(TAG, "BGRA frame data too small: " + frameData.length + " expected: " + expectedSize);
-                return null;
-            }
-            
             // Create bitmap with optimal configuration
             Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            
-            // Use direct buffer operations for better performance
-            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(expectedSize);
-            buffer.put(frameData, 0, expectedSize);
-            buffer.rewind();
-            
-            // Convert BGRA to ARGB in chunks for better cache efficiency
             int[] pixels = new int[width * height];
-            int pixelIndex = 0;
             
-            // Process in chunks of 1024 pixels for better memory locality
-            int chunkSize = Math.min(1024, pixels.length);
+            // Optimized pixel conversion - process in chunks for better cache efficiency
+            int chunkSize = Math.min(2048, pixels.length); // Process 2048 pixels at a time
             for (int chunk = 0; chunk < pixels.length; chunk += chunkSize) {
                 int endIndex = Math.min(chunk + chunkSize, pixels.length);
                 
@@ -877,11 +790,11 @@ public class MainActivity extends Activity {
             return bitmap;
             
         } catch (Exception e) {
-            Log.e(TAG, "Error creating optimized BGRA bitmap", e);
+            Log.e(TAG, "Error creating BGRA bitmap", e);
             return null;
         }
     }
-
+    
     private Bitmap createBitmapFromRGBA(byte[] frameData, int width, int height) {
         try {
             int expectedSize = width * height * 4;
